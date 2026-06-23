@@ -55,11 +55,17 @@ extern char l6474StrOut[DEBUG_BUFFER_SIZE];
 /// Maximum number of steps
 #define MAX_STEPS         (0x7FFFFFFF)
 /// uint8_t max value
+#ifndef UINT8_MAX
 #define UINT8_MAX         (uint8_t)(0XFF)
+#endif
 /// uint16_t max value
+#ifndef UINT8_MAX
 #define UINT16_MAX        (uint16_t)(0XFFFF)
+#endif
 /// uint32_t max value
+#ifndef UINT32_MAX
 #define UINT32_MAX        (uint32_t)(0xFFFFFFFF)
+#endif
 
 /// Pwm prescaler array size for general purpose timers
 #define PRESCALER_ARRAY_GPT_SIZE (6)
