@@ -1,0 +1,39 @@
+name: Compile Sketches
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        fqbn:
+          - arduino:renesas_uno:minima
+          - arduino:renesas_uno:unor4wifi
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Cache the downloaded core files based on the OS and the FQBN
+      - name: Cache Arduino Core
+        uses: actions/cache@v4
+        with:
+          path: ~/.arduino15/packages
+          key: ${{ runner.os }}-arduino-core-${{ matrix.fqbn }}
+
+      - name: Compile examples
+        uses: arduino/compile-sketches@v1
+        with:
+          fqbn: ${{ matrix.fqbn }}
+          platforms: |
+            - name: arduino:renesas_uno
+          libraries: |
+            - source-path: ./
+          sketch-paths: |
+            - ./examples
