@@ -14,7 +14,7 @@
 
 #ifndef __L6474_H_INCLUDED
 #define __L6474_H_INCLUDED
-s
+
 #include <Arduino.h>
 #include <inttypes.h>
 #include <FspTimer.h>
