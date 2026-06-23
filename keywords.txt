@@ -17,6 +17,7 @@ Begin	KEYWORD2
 GetAcceleration	KEYWORD2
 GetCurrentSpeed	KEYWORD2
 GetDeceleration	KEYWORD2
+GetDirection	KEYWORD2
 GetFwVersion	KEYWORD2
 GetMark	KEYWORD2
 GetMaxSpeed	KEYWORD2
@@ -45,13 +46,12 @@ CmdGetParam	KEYWORD2
 CmdGetStatus	KEYWORD2
 CmdNop	KEYWORD2
 CmdSetParam	KEYWORD2
+ConvertCurrentToTval	KEYWORD2
 Reset	KEYWORD2
 ReleaseReset	KEYWORD2
 SelectStepMode	KEYWORD2
 SetDirection	KEYWORD2
-
-WaitMs	KEYWORD2
-WaitUs	KEYWORD2
+SetHoldPosition	KEYWORD2
 
 #######################################
 #Constants(LITERAL1)
