@@ -5,6 +5,8 @@ Stepper motor driver library for Arduino Uno R4 using the X-NUCLEO-IHM01A1 shiel
 ----------------
 This library allows an Arduino Uno R4 to control one or more stepper motors using the X-NUCLEO-IHM01A1 shield. It supports daisy-chaining multiple shields.
 
+*Note: This is a 32-bit ARM (Renesas) port of the original AVR-based L6474 library. If you are using an older 8-bit Arduino Uno R3, please use the original repository linked in the credits.*
+
 ### 2. Installing the library into the Arduino IDE
 ------------------------------------------------
 This library can be installed using the Arduino Library Manager. Open the IDE, go to `Sketch > Include Library > Manage Libraries...`, and search for "L6474-stepper-motor-driver".
@@ -211,6 +213,8 @@ Then you have to enter one of the following command line:
 
 ### 11. Motivation & Support
 ------------------------------------
-This port of the L6474 library to the Arduino Uno R4 was originally developed to support high-precision, closed-loop motion control for other projects of mine. For a deeper dive into its use, please visit my [website](https://mattykakesmakes.com/).
+This library is a modernized port of the original [L6474 library](https://github.com/MotorDriver/L6474) created by MotorDriver. 
+
+The original codebase provided the excellent foundation for handling the complex SPI daisy-chaining and register configurations for the STMicroelectronics L6474 chip. It was forked and heavily refactored by Matthew R. Miller to migrate the stepping logic from 8-bit AVR hardware timers to the 32-bit ARM Cortex-M4 FSP architecture used on the Arduino Uno R4.
 
 If you enjoyed using this library, and want to support my contributions, please feel free to [Buy me a Coffee](https://buymeacoffee.com/mattykakesmakes) 🍵😉
