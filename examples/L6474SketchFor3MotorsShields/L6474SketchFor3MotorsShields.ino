@@ -1,14 +1,5 @@
 /* This sketch is an example use of the L6474 library with three shields  X-NUCLEO-IHM01A1*/
 /* It drives three stepper motors */
-/* To use 3 motors board X-NUCLEO-IHM01A1, you need to use timer0 for L6474 library */
-/* while this timer is generally used in Arduino standard library for */
-/* delay, millis,... functions. So, you cannot use these functions    */
-/* with this configuration */
-/* Moreover, this configuration required to  to use the handler: ISR(TIMER0_OVF_vect)  */
-/* which is already used via default Arduino function */
-/* That's why we need to redefine here the main() and myinit() functions */
-/*To enable the use of timer0 by L6474 library you need to define */
-/* the follwing line  //#define _USE_TIMER_0_FOR_L6474 in l6474.h */
 
 #include <l6474.h>
 #include <SPI.h>
