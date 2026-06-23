@@ -1,8 +1,10 @@
 /******************************************************//**
  * @file    l6474.h 
- * @version V1.0
- * @date    March 3, 2014
- * @brief   Header for L6474   library for arduino 
+ * @version V3.1
+ * @date    June 14, 2026
+ * @brief   Header for L6474 library for arduino UNO R4
+ * @author  Original: MotorDriver (https://github.com/MotorDriver/L6474)
+ *          Ported/Maintained by: Matthew R. Miller
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of either the GNU General Public License version 2
@@ -12,15 +14,11 @@
 
 #ifndef __L6474_H_INCLUDED
 #define __L6474_H_INCLUDED
-
-#include "Arduino.h"
+s
+#include <Arduino.h>
 #include <inttypes.h>
-#include <l6474_target_config.h>
-
-//To use 3 L6474 shield boards you have to ebable this flag
-//but you will no more able to use Arduino functions which
-//are based on timer 0 (delay(), millis()...)
-//#define _USE_TIMER_0_FOR_L6474
+#include <FspTimer.h>
+#include "l6474_target_config.h"
 
 /// Define to print debug logs via the UART 
 #ifndef _DEBUG_L6474
@@ -32,16 +30,6 @@
 #define DEBUG_BUFFER_SIZE    (75)
 /// Log buffer
 extern char l6474StrOut[DEBUG_BUFFER_SIZE];
-#endif
-
-/// Clear bit Macro 
-#ifndef cbi
-  #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
-#endif
-
-/// Set bit Macro 
-#ifndef sbi
-  #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 #endif
 
 /// Current FW version
@@ -70,11 +58,11 @@ extern char l6474StrOut[DEBUG_BUFFER_SIZE];
 #define UINT8_MAX         (uint8_t)(0XFF)
 /// uint16_t max value
 #define UINT16_MAX        (uint16_t)(0XFFFF)
+/// uint32_t max value
+#define UINT32_MAX        (uint32_t)(0xFFFFFFFF)
 
-/// Pwm prescaler array size for timer 0 & 1
-#define PRESCALER_ARRAY_TIMER0_1_SIZE   (6)
-/// Pwm prescaler array size for timer 2
-#define PRESCALER_ARRAY_TIMER2_SIZE     (8)
+/// Pwm prescaler array size for general purpose timers
+#define PRESCALER_ARRAY_GPT_SIZE (6)
 
 /// Maximum frequency of the PWMs
 #define L6474_MAX_PWM_FREQ   (10000)
@@ -211,7 +199,7 @@ typedef enum {
   L6474_CONFIG_EN_TQREG = ((uint16_t) 0x0020),
   L6474_CONFIG_OC_SD    = ((uint16_t) 0x0080),
   L6474_CONFIG_POW_SR   = ((uint16_t) 0x0300),
-  L6474_CONFIG_TOFF      = ((uint16_t) 0x7C00)
+  L6474_CONFIG_TOFF     = ((uint16_t) 0x7C00)
 } L6474_CONFIG_Masks_t;
 
 /// L6474 clock source options for CONFIG register
@@ -245,38 +233,38 @@ typedef enum {
 
 /// L6474 power bridge output slew_rates options (POW_SR values for CONFIG register)
 typedef enum {
-  L6474_CONFIG_SR_320V_us    =((uint16_t)0x0000),
-  L6474_CONFIG_SR_075V_us    =((uint16_t)0x0100),
-  L6474_CONFIG_SR_110V_us    =((uint16_t)0x0200),
-  L6474_CONFIG_SR_260V_us    =((uint16_t)0x0300)
+  L6474_CONFIG_SR_320V_us    = ((uint16_t)0x0000),
+  L6474_CONFIG_SR_075V_us    = ((uint16_t)0x0100),
+  L6474_CONFIG_SR_110V_us    = ((uint16_t)0x0200),
+  L6474_CONFIG_SR_260V_us    = ((uint16_t)0x0300)
 } L6474_CONFIG_POW_SR_t;
 
 /// L6474 Off time options (TOFF values for CONFIG register)
 typedef enum {
-  L6474_CONFIG_TOFF_004us   = (((uint16_t) 0x01) << 10),
-  L6474_CONFIG_TOFF_008us   = (((uint16_t) 0x02) << 10),
-  L6474_CONFIG_TOFF_012us  = (((uint16_t) 0x03) << 10),
-  L6474_CONFIG_TOFF_016us  = (((uint16_t) 0x04) << 10),
-  L6474_CONFIG_TOFF_020us  = (((uint16_t) 0x05) << 10),
-  L6474_CONFIG_TOFF_024us  = (((uint16_t) 0x06) << 10),
-  L6474_CONFIG_TOFF_028us  = (((uint16_t) 0x07) << 10),
-  L6474_CONFIG_TOFF_032us  = (((uint16_t) 0x08) << 10),
-  L6474_CONFIG_TOFF_036us  = (((uint16_t) 0x09) << 10),
-  L6474_CONFIG_TOFF_040us  = (((uint16_t) 0x0A) << 10),
-  L6474_CONFIG_TOFF_044us  = (((uint16_t) 0x0B) << 10),
-  L6474_CONFIG_TOFF_048us  = (((uint16_t) 0x0C) << 10),
-  L6474_CONFIG_TOFF_052us  = (((uint16_t) 0x0D) << 10),
-  L6474_CONFIG_TOFF_056us  = (((uint16_t) 0x0E) << 10),
-  L6474_CONFIG_TOFF_060us  = (((uint16_t) 0x0F) << 10),
-  L6474_CONFIG_TOFF_064us  = (((uint16_t) 0x10) << 10),
-  L6474_CONFIG_TOFF_068us  = (((uint16_t) 0x11) << 10),
-  L6474_CONFIG_TOFF_072us  = (((uint16_t) 0x12) << 10),
-  L6474_CONFIG_TOFF_076us  = (((uint16_t) 0x13) << 10),
-  L6474_CONFIG_TOFF_080us  = (((uint16_t) 0x14) << 10),
-  L6474_CONFIG_TOFF_084us  = (((uint16_t) 0x15) << 10),
-  L6474_CONFIG_TOFF_088us  = (((uint16_t) 0x16) << 10),
-  L6474_CONFIG_TOFF_092us  = (((uint16_t) 0x17) << 10),
-  L6474_CONFIG_TOFF_096us  = (((uint16_t) 0x18) << 10),
+  L6474_CONFIG_TOFF_004us = (((uint16_t) 0x01) << 10),
+  L6474_CONFIG_TOFF_008us = (((uint16_t) 0x02) << 10),
+  L6474_CONFIG_TOFF_012us = (((uint16_t) 0x03) << 10),
+  L6474_CONFIG_TOFF_016us = (((uint16_t) 0x04) << 10),
+  L6474_CONFIG_TOFF_020us = (((uint16_t) 0x05) << 10),
+  L6474_CONFIG_TOFF_024us = (((uint16_t) 0x06) << 10),
+  L6474_CONFIG_TOFF_028us = (((uint16_t) 0x07) << 10),
+  L6474_CONFIG_TOFF_032us = (((uint16_t) 0x08) << 10),
+  L6474_CONFIG_TOFF_036us = (((uint16_t) 0x09) << 10),
+  L6474_CONFIG_TOFF_040us = (((uint16_t) 0x0A) << 10),
+  L6474_CONFIG_TOFF_044us = (((uint16_t) 0x0B) << 10),
+  L6474_CONFIG_TOFF_048us = (((uint16_t) 0x0C) << 10),
+  L6474_CONFIG_TOFF_052us = (((uint16_t) 0x0D) << 10),
+  L6474_CONFIG_TOFF_056us = (((uint16_t) 0x0E) << 10),
+  L6474_CONFIG_TOFF_060us = (((uint16_t) 0x0F) << 10),
+  L6474_CONFIG_TOFF_064us = (((uint16_t) 0x10) << 10),
+  L6474_CONFIG_TOFF_068us = (((uint16_t) 0x11) << 10),
+  L6474_CONFIG_TOFF_072us = (((uint16_t) 0x12) << 10),
+  L6474_CONFIG_TOFF_076us = (((uint16_t) 0x13) << 10),
+  L6474_CONFIG_TOFF_080us = (((uint16_t) 0x14) << 10),
+  L6474_CONFIG_TOFF_084us = (((uint16_t) 0x15) << 10),
+  L6474_CONFIG_TOFF_088us = (((uint16_t) 0x16) << 10),
+  L6474_CONFIG_TOFF_092us = (((uint16_t) 0x17) << 10),
+  L6474_CONFIG_TOFF_096us = (((uint16_t) 0x18) << 10),
   L6474_CONFIG_TOFF_100us = (((uint16_t) 0x19) << 10),
   L6474_CONFIG_TOFF_104us = (((uint16_t) 0x1A) << 10),
   L6474_CONFIG_TOFF_108us = (((uint16_t) 0x1B) << 10),
@@ -413,12 +401,13 @@ class L6474 {
     /// @defgroup group1 Shield control functions
     ///@{
     void AttachFlagInterrupt(void (*callback)(void));     //Attach a user callback to the flag Interrupt
-    void Begin(uint8_t nbShields);                        //Start the L6474 library
+    bool Begin(uint8_t nbShields);                        //Start the L6474 library
     uint16_t GetAcceleration(uint8_t shieldId);           //Return the acceleration in pps^2
     uint16_t GetCurrentSpeed(uint8_t shieldId);           //Return the current speed in pps
     uint16_t GetDeceleration(uint8_t shieldId);           //Return the deceleration in pps^2
     shieldState_t GetShieldState(uint8_t shieldId);       //Return the shield state
     uint8_t GetFwVersion(void);                           //Return the FW version
+    dir_t GetDirection(uint8_t shieldId);                 //Return the direction of the specified shield
     int32_t GetMark(uint8_t shieldId);                    //Return the mark position 
     uint16_t GetMaxSpeed(uint8_t shieldId);               //Return the max speed in pps
     uint16_t GetMinSpeed(uint8_t shieldId);               //Return the min speed in pps
@@ -437,23 +426,25 @@ class L6474 {
     void SetHome(uint8_t shieldId);                          //Set current position to be the home position
     void SetMark(uint8_t shieldId);                          //Set current position to be the Markposition
     bool SetMaxSpeed(uint8_t shieldId,uint16_t newMaxSpeed); //Set the max speed in pps
-    bool SetMinSpeed(uint8_t shieldId,uint16_t newMinSpeed); //Set the min speed in pps   
+    bool SetMinSpeed(uint8_t shieldId,uint16_t newMinSpeed); //Set the min speed in pps
     bool SoftStop(uint8_t shieldId);                         //Progressively stops the motor 
     void WaitWhileActive(uint8_t shieldId);                  //Wait for the shield state becomes Inactive
     ///@}
     
     /// @defgroup group2 L6474 control functions
     ///@{
+    void SetHoldPosition(bool holdStaticPosition);  //Set flag to hold position when Inactive  
     void CmdDisable(uint8_t shieldId);              //Send the L6474_DISABLE command
     void CmdEnable(uint8_t shieldId);               //Send the L6474_ENABLE command
     uint32_t CmdGetParam(uint8_t shieldId,          //Send the L6474_GET_PARAM command
                                  L6474_Registers_t param);
-    uint16_t CmdGetStatus(uint8_t shieldId);        // Send the L6474_GET_STATUS command
+    uint16_t CmdGetStatus(uint8_t shieldId);        //Send the L6474_GET_STATUS command
     void CmdNop(uint8_t shieldId);                  //Send the L6474_NOP command
     void CmdSetParam(uint8_t shieldId,              //Send the L6474_SET_PARAM command
                              L6474_Registers_t param,       
                              uint32_t value);
-    uint16_t ReadStatusRegister(uint8_t shieldId);  // Read the L6474_STATUS register without
+    uint8_t ConvertCurrentToTval(double mA);        //Converts mA in compatible values for TVAL register
+    uint16_t ReadStatusRegister(uint8_t shieldId);  //Read the L6474_STATUS register without
                                                     // clearing the flags
     void Reset(void);                               //Set the L6474 reset pin 
     void ReleaseReset(void);                        //Release the L6474 reset pin 
@@ -462,19 +453,8 @@ class L6474 {
     void SetDirection(uint8_t shieldId,             //Set the L6474 direction pin
                               dir_t direction);      
     ///@}
-    
-    /// @defgroup group3 Delay functions
-    ///@{
-    /// @brief Required when 3 L6474 shields are used 
-    /// to avoid conflicting depencieswith wiring.c 
-    /// (redefinition of ISR(TIMER0_OVF_vect).  
-    /// When only 2 L6474 shields are used, prefer the use 
-    /// of standard Arduino functions (delay, delayMicroseconds).
-    static void WaitMs(uint16_t msDelay); // Wait for a delay in ms
-    static void WaitUs(uint16_t usDelay); // Wait for a delay in us
-    ///@}
         
-    /// @defgroup group4 Functions for timer ISRs only
+    /// @defgroup group3 Functions for timer ISRs only
     /// @brief To be used inside the library by the timer ISRs only 
     /// Must not be used elsewhere.
     ///@{
@@ -486,29 +466,30 @@ class L6474 {
     void ApplySpeed(uint8_t pwmId, uint16_t newSpeed);
     void ComputeSpeedProfile(uint8_t shieldId, uint32_t nbSteps);
     int32_t ConvertPosition(uint32_t abs_position_reg); 
+    static void Gpt0TimerCallback(timer_callback_args_t *p_args);
+    static void Gpt1TimerCallback(timer_callback_args_t *p_args);
+    static void Gpt3TimerCallback(timer_callback_args_t *p_args);
     static void FlagInterruptHandler(void);
     void SendCommand(uint8_t shieldId, uint8_t param);
     void SetRegisterToPredefinedValues(uint8_t shieldId);
     void WriteBytes(uint8_t *pByteToTransmit, uint8_t *pReceivedByte);    
     void PwmInit(uint8_t pwmId);
-    void Pwm1SetFreq(uint16_t newFreq);
-    void Pwm2SetFreq(uint16_t newFreq);
-    void Pwm3SetFreq(uint16_t newFreq);
+    void PwmSetFreq(uint8_t shieldId, uint16_t newFreq);
     void PwmStop(uint8_t pwmId);
     void SetShieldParamsToPredefinedValues(void);
     void StartMovement(uint8_t shieldId);
     uint8_t Tval_Current_to_Par(double Tval);
     uint8_t Tmin_Time_to_Par(double Tmin);
     
-    // variable members        
+    // variable members
+    bool holdPosition;
     shieldParams_t shieldPrm[MAX_NUMBER_OF_SHIELDS];
-    static volatile class L6474 *instancePtr;
+    static FspTimer gptPwm[MAX_NUMBER_OF_SHIELDS];
+    static class L6474 *instancePtr;
     static volatile void(*flagInterruptCallback)(void);
     static volatile bool isrFlag;
     static volatile bool spiPreemtionByIsr;
     static volatile uint8_t numberOfShields;
-    static const uint16_t prescalerArrayTimer0_1[PRESCALER_ARRAY_TIMER0_1_SIZE];
-    static const uint16_t prescalerArrayTimer2[PRESCALER_ARRAY_TIMER2_SIZE];
     static uint8_t spiTxBursts[L6474_CMD_ARG_MAX_NB_BYTES][MAX_NUMBER_OF_SHIELDS];
     static uint8_t spiRxBursts[L6474_CMD_ARG_MAX_NB_BYTES][MAX_NUMBER_OF_SHIELDS];
 };

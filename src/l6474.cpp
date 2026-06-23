@@ -1,8 +1,10 @@
 /******************************************************//**
  * @file    l6474.cpp 
- * @version V1.0
- * @date    March 3, 2014
- * @brief   L6474 library for arduino 
+ * @version V3.1
+ * @date    June 14, 2026
+ * @brief   L6474 library for arduino UNO R4
+ * @author  Original: MotorDriver (https://github.com/MotorDriver/L6474)
+ *          Ported/Maintained by: Matthew R. Miller
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of either the GNU General Public License version 2
@@ -18,16 +20,15 @@
 char l6474StrOut[DEBUG_BUFFER_SIZE];
 #endif
 
-const uint16_t L6474::prescalerArrayTimer0_1[PRESCALER_ARRAY_TIMER0_1_SIZE] = { 0, 1, 8, 64, 256, 1024};
-const uint16_t L6474::prescalerArrayTimer2[PRESCALER_ARRAY_TIMER2_SIZE] = {0, 1, 8, 32, 64, 128, 256, 1024};
 volatile void (*L6474::flagInterruptCallback)(void);
 volatile uint8_t L6474::numberOfShields;
 uint8_t L6474::spiTxBursts[L6474_CMD_ARG_MAX_NB_BYTES][MAX_NUMBER_OF_SHIELDS];
 uint8_t L6474::spiRxBursts[L6474_CMD_ARG_MAX_NB_BYTES][MAX_NUMBER_OF_SHIELDS];
 volatile bool L6474::spiPreemtionByIsr = false;
 volatile bool L6474::isrFlag = false;
-volatile class L6474* L6474::instancePtr = NULL;
-  
+class L6474* L6474::instancePtr = nullptr;
+FspTimer L6474::gptPwm[MAX_NUMBER_OF_SHIELDS];
+
 /******************************************************//**
  * @brief  Constructor
  * @param  None
@@ -42,7 +43,8 @@ L6474::L6474()
     shieldPrm[i].commandExecuted = NO_CMD;
     shieldPrm[i].stepsToTake = MAX_STEPS;
   }
-    instancePtr = this;
+  instancePtr = this;
+  holdPosition = false;
 }
 
 /******************************************************//**
@@ -63,25 +65,27 @@ void L6474::AttachFlagInterrupt(void (*callback)(void))
 /******************************************************//**
  * @brief Starts the L6474 library
  * @param[in] nbShields Number of L6474 shields to use (from 1 to 3)
- * @retval None
+ * @retval true if initialization was successful, false if not
  **********************************************************/
-void L6474::Begin(uint8_t nbShields)
+bool L6474::Begin(uint8_t nbShields)
 {
   numberOfShields = nbShields;
   
+  /* SS (Chip Select) pin must be explicitly set to output and driven HIGH
+   * to ensure the slave ignores the bus during setup. */
+  pinMode(SS, OUTPUT);
+  digitalWrite(SS, HIGH);
+
   // start the SPI library:
   SPI.begin();
-  SPI.setBitOrder(MSBFIRST);
-  SPI.setDataMode(SPI_MODE3);
-  SPI.setClockDivider(SPI_CLOCK_DIV4);
   
   // flag pin
   pinMode(L6474_FLAG_Pin, INPUT_PULLUP);
-  attachInterrupt(0, FlagInterruptHandler, FALLING);
+  attachInterrupt(digitalPinToInterrupt(L6474_FLAG_Pin), FlagInterruptHandler, FALLING);
   
   //reset pin
   pinMode(L6474_Reset_Pin, OUTPUT);
-  
+
   switch (nbShields)
   {
     case 3:
@@ -113,6 +117,11 @@ void L6474::Begin(uint8_t nbShields)
     /* Get Status to clear flags after start up */
     CmdGetStatus(i);
   }
+
+  // assign this here so static initialization always happens first and the pointer is valid when the first interrupt occurs 
+  instancePtr = this;
+
+  return true;
 }
 
 /******************************************************//**
@@ -153,6 +162,16 @@ uint16_t L6474::GetDeceleration(uint8_t shieldId)
 uint8_t L6474::GetFwVersion(void)
 {
   return (L6474_FW_VERSION);
+}
+
+/******************************************************//**
+ * @brief Returns the direction of the specified shield
+ * @param[in] shieldId (from 0 to 2)
+ * @retval Direction (FORWARD or BACKWARD)
+ **********************************************************/
+dir_t L6474::GetDirection(uint8_t shieldId)
+{
+  return shieldPrm[shieldId].direction;
 }
 
 /******************************************************//**
@@ -349,7 +368,7 @@ void L6474::ResetAllShields(void)
   	HardStop(loop);
   }
 	Reset();
-	WaitUs(20); // Reset pin must be forced low for at least 10us
+	delayMicroseconds(20); // Reset pin must be forced low for at least 10us
 	ReleaseReset();
 }
 
@@ -382,7 +401,7 @@ void L6474::Run(uint8_t shieldId, dir_t direction)
  * @param[in] shieldId (from 0 to 2)
  * @param[in] newAcc New acceleration to apply in pps^2
  * @retval true if the command is successfully executed, else false
- * @note The command is not performed is the shield is executing 
+ * @note The command is not performed if the shield is executing 
  * a MOVE or GOTO command (but it can be used during a RUN command)
  **********************************************************/
 bool L6474::SetAcceleration(uint8_t shieldId,uint16_t newAcc)
@@ -403,7 +422,7 @@ bool L6474::SetAcceleration(uint8_t shieldId,uint16_t newAcc)
  * @param[in] shieldId (from 0 to 2)
  * @param[in] newDec New deceleration to apply in pps^2
  * @retval true if the command is successfully executed, else false
- * @note The command is not performed is the shield is executing 
+ * @note The command is not performed if the shield is executing 
  * a MOVE or GOTO command (but it can be used during a RUN command)
  **********************************************************/
 bool L6474::SetDeceleration(uint8_t shieldId, uint16_t newDec)
@@ -515,13 +534,28 @@ void L6474::WaitWhileActive(uint8_t shieldId)
 }
 
 /******************************************************//**
+ * @brief  Set flag which determines if the power bridge should remain enabled
+ * when movement has ended (INACTIVE). If true, the CmdDisable will be ignored
+ * which will keep the last position of the motor energized.
+ * @param[in] holdPosition
+ * @retval None
+ **********************************************************/
+void L6474::SetHoldPosition(bool holdStaticPosition)
+{
+  holdPosition = holdStaticPosition;
+}
+
+/******************************************************//**
  * @brief  Issue the Disable command to the L6474 of the specified shield
  * @param[in] shieldId (from 0 to 2)
  * @retval None
  **********************************************************/
 void L6474::CmdDisable(uint8_t shieldId)
 {
-  SendCommand(shieldId, L6474_DISABLE);
+  if (!holdPosition)
+  {
+    SendCommand(shieldId, L6474_DISABLE);
+  }
 }
 
 /******************************************************//**
@@ -608,6 +642,17 @@ uint32_t L6474::CmdGetParam(uint8_t shieldId, L6474_Registers_t param)
   interrupts();
     
   return (spiRxData);
+}
+
+/******************************************************//**
+ * @brief Converts mA in compatible values for TVAL register
+ * for use with CmdSetParam(n, L6474_TVAL, ConvertCurrentToTval(mA))
+ * @param[in] mA
+ * @retval TVAL values
+ **********************************************************/
+uint8_t L6474::ConvertCurrentToTval(double mA)
+{
+  return Tval_Current_to_Par(mA);
 }
 
 /******************************************************//**
@@ -830,99 +875,6 @@ void L6474::SetDirection(uint8_t shieldId, dir_t dir)
     }
   }
 }
-
-/******************************************************//**
- * @brief  Waits for the specify delay in milliseconds
- * @param[in] msDelay delay in milliseconds
- * @retval None
- * @note Should only be used for 3 shields configuration.
- * Else, prefer the standard Arduino function delay().
- **********************************************************/
-void L6474::WaitMs(uint16_t msDelay)
-{
-  uint16_t i;
-  for (i = 0; i < msDelay ; i++)
-  {
-    WaitUs(1000);
-  }
-}
-
-/******************************************************//**
- * @brief  Waits for the specify delay in microseconds
- * @param[in] usDelay delay in microseconds
- * @retval None
- * @note Should be only used for 3 shields configuration.
- * Else, prefer the standard Arduino function delayMicroseconds().
- * Besides, this function is a copy of delayMicroseconds inside
- * the L6474 library to avoid dependencies conflicts 
- * (a redefinition of ISR(TIMER0_OVF_vect)). 
- **********************************************************/
-void L6474::WaitUs(uint16_t usDelay)
-{
-	// calling avrlib's delay_us() function with low values (e.g. 1 or
-	// 2 microseconds) gives delays longer than desired.
-	//delay_us(us);
-#if F_CPU >= 20000000L
-	// for the 20 MHz clock on rare Arduino boards
-
-	// for a one-microsecond delay, simply wait 2 cycle and return. The overhead
-	// of the function call yields a delay of exactly a one microsecond.
-	__asm__ __volatile__ (
-		"nop" "\n\t"
-		"nop"); //just waiting 2 cycle
-	if (--usDelay == 0)
-		return;
-
-	// the following loop takes a 1/5 of a microsecond (4 cycles)
-	// per iteration, so execute it five times for each microsecond of
-	// delay requested.
-	usDelay = (usDelay<<2) + usDelay; // x5 us
-
-	// account for the time taken in the preceeding commands.
-	usDelay -= 2;
-
-#elif F_CPU >= 16000000L
-	// for the 16 MHz clock on most Arduino boards
-
-	// for a one-microsecond delay, simply return.  the overhead
-	// of the function call yields a delay of approximately 1 1/8 us.
-	if (--usDelay == 0)
-		return;
-
-	// the following loop takes a quarter of a microsecond (4 cycles)
-	// per iteration, so execute it four times for each microsecond of
-	// delay requested.
-	usDelay <<= 2;
-
-	// account for the time taken in the preceeding commands.
-	usDelay -= 2;
-#else
-	// for the 8 MHz internal clock on the ATmega168
-
-	// for a one- or two-microsecond delay, simply return.  the overhead of
-	// the function calls takes more than two microseconds.  can't just
-	// subtract two, since us is unsigned; we'd overflow.
-	if (--usDelay == 0)
-		return;
-	if (--usDelay == 0)
-		return;
-
-	// the following loop takes half of a microsecond (4 cycles)
-	// per iteration, so execute it twice for each microsecond of
-	// delay requested.
-	usDelay <<= 1;
-    
-	// partially compensate for the time taken by the preceeding commands.
-	// we can't subtract any more than this or we'd overflow w/ small delays.
-	usDelay--;
-#endif
-
-	// busy wait
-	__asm__ __volatile__ (
-		"1: sbiw %0,1" "\n\t" // 2 cycles
-		"brne 1b" : "=w" (usDelay) : "0" (usDelay) // 2 cycles
-	);
-}  
                   
 /******************************************************//**
  * @brief  Gets the pointer to the L6474 instance
@@ -935,7 +887,12 @@ class L6474* L6474::GetInstancePtr(void)
 }
 
 /******************************************************//**
- * @brief  Handles the shield state machine at each ste
+ * @brief  Executes the motion state machine at each clock pulse.
+ * Functionally, it tracks relative position, performs active 
+ * closed-loop verification against the driver's hardware 
+ * registers, and manages the velocity profile (acceleration, 
+ * steady-state, or deceleration) by updating the timer frequency 
+ * as the motor traverses the trapezoidal profile.
  * @param[in] shieldId (from 0 to 2)
  * @retval None
  * @note Must only be called by the timer ISR
@@ -948,11 +905,12 @@ void L6474::StepClockHandler(uint8_t shieldId)
   /* Incrementation of the relative position */
   shieldPrm[shieldId].relativePos++;
   
-  /* Periodically check that estimated position is correct */
+  /* Periodically check that estimated position is correct every 16 steps.
+   * Previously every 10 steps using a modulo - use 16 steps to use a bitmask. */
   if ((shieldPrm[shieldId].commandExecuted != RUN_CMD) && 
-      ((shieldPrm[shieldId].relativePos % 10) == 00))
+      ((shieldPrm[shieldId].relativePos & 15) == 00))
   {
-    uint32_t AbsPos= ConvertPosition(CmdGetParam(shieldId,L6474_ABS_POS));
+    uint32_t AbsPos = ConvertPosition(CmdGetParam(shieldId,L6474_ABS_POS));
   
     /* Correct estimated position if needed */
     if (AbsPos != 0)
@@ -985,7 +943,7 @@ void L6474::StepClockHandler(uint8_t shieldId)
     {
         if ((shieldPrm[shieldId].commandExecuted == SOFT_STOP_CMD)||
             ((shieldPrm[shieldId].commandExecuted != RUN_CMD)&&  
-             (shieldPrm[shieldId].relativePos == shieldPrm[shieldId].startDecPos)))
+             (shieldPrm[shieldId].relativePos >= shieldPrm[shieldId].startDecPos)))
         {
           shieldPrm[shieldId].motionState = DECELERATING;
           shieldPrm[shieldId].accu = 0;
@@ -996,7 +954,7 @@ void L6474::StepClockHandler(uint8_t shieldId)
         }
         else if ((shieldPrm[shieldId].speed >= shieldPrm[shieldId].maxSpeed)||
                  ((shieldPrm[shieldId].commandExecuted != RUN_CMD)&&
-                  (shieldPrm[shieldId].relativePos == shieldPrm[shieldId].endAccPos)))
+                  (shieldPrm[shieldId].relativePos >= shieldPrm[shieldId].endAccPos)))
         {
           shieldPrm[shieldId].motionState = STEADY;
 #ifdef _DEBUG_L6474
@@ -1112,21 +1070,7 @@ void L6474::ApplySpeed(uint8_t shieldId, uint16_t newSpeed)
   }
   
   shieldPrm[shieldId].speed = newSpeed;
-
-  switch (shieldId)
-  {
-    case  0:
-      Pwm1SetFreq(newSpeed);
-      break;
-    case 1:
-      Pwm2SetFreq(newSpeed);
-      break;
-    case 2:
-      Pwm3SetFreq(newSpeed);
-      break;
-    default:
-      break; //ignore error
-  }
+  PwmSetFreq(shieldId, newSpeed);
 }
 
 /******************************************************//**
@@ -1223,7 +1167,7 @@ int32_t L6474::ConvertPosition(uint32_t abs_position_reg)
  **********************************************************/
 void L6474::FlagInterruptHandler(void)
 {
-  if (flagInterruptCallback != NULL)
+  if (flagInterruptCallback != nullptr)
   {
     /* Set isr flag */
     isrFlag = true;
@@ -1401,7 +1345,8 @@ void L6474::SetRegisterToPredefinedValues(uint8_t shieldId)
  **********************************************************/
 void L6474::WriteBytes(uint8_t *pByteToTransmit, uint8_t *pReceivedByte)
 {
-  digitalWrite(SS, LOW);
+  SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE3));
+  digitalWrite(SS, LOW); // Pull chip select low to start communication
   for (uint32_t i = 0; i < numberOfShields; i++)
   {
     *pReceivedByte = SPI.transfer(*pByteToTransmit);
@@ -1409,6 +1354,7 @@ void L6474::WriteBytes(uint8_t *pByteToTransmit, uint8_t *pReceivedByte)
     pReceivedByte++;
   }
   digitalWrite(SS, HIGH);
+  SPI.endTransaction(); // Release chip select
   if (isrFlag)
   {
     spiPreemtionByIsr = true;
@@ -1419,190 +1365,61 @@ void L6474::WriteBytes(uint8_t *pByteToTransmit, uint8_t *pReceivedByte)
  * @brief  Initialises the PWM uses by the specified shield
  * @param[in] shieldId (from 0 to 2)
  * @retval None
- * @note Shield 0 uses PW1 based on timer 1 
- * Shield 1 uses PWM 2 based on timer 2
- * Shield 2 uses PWM3 based timer 0
+ * @note Shield 0 uses PW1 based on General Purpose Timer 3
+ * Shield 1 uses PWM2 based on General Purpose Timer 0
+ * Shield 2 uses PWM3 based General Purpose Timer 1
+ * See 22.3.3 for PWM Output Operating Mode
  **********************************************************/
 void L6474::PwmInit(uint8_t shieldId)
 {
+  uint8_t channel;
+  void (*callback)(timer_callback_args_t*);
+
+  /* Select which timer to initialize */
   switch (shieldId)
   {
-    case 0:
-      /* PWM1 uses timer 1 */
-      /* Initialise timer by setting waveform generation mode  
-      to PWM phase and Frequency correct: mode = 8 
-      (WGM10 = 0, WGM11 = 0, WGM12 = 0, WGM13 = 1) */
-    
-      /* Stop timer1 by clearing CSS bits and set WGM13 and WGM12 */
-      TCCR1B = 0x10;  
-       
-      /* Set WGM10 and WGM11 */
-      TCCR1A =  0x00;  
-      
-      /*  Disable Timer1 interrupt */
-      TIMSK1 = 0;
-    
+    case 0: // Shield 0 -> D9 -> GPT0
+      channel = 0;
+      callback = Gpt0TimerCallback;
       break;
-    case  1:
-      /* PWM2 uses timer 2 */
-      /* Initialise timer by setting waveform generation mode  
-      to PWM phase correct: mode = 5
-      (WGM0 = 1, WGM21 = 0, WGM22 = 1) */
-      
-      /* Stop timer2 by clearing CSS bits and set WGM22 */
-      TCCR2B = 0x08;  
-       
-      /* Set WGM20 and WGM21 */
-      TCCR2A =  0x01;  
-      
-      /*  Disable Timer2 interrupt */
-      TIMSK2 = 0; 
-      
-      break;
-
-
-    case 2:
-      /* PWM3 uses timer 0 */
-      /* !!!!! Caution: Calling this configuration will break */
-      /* all default Arduino's timing functions as delay(),millis()... */
-      
-      /* Initialise timer by setting waveform generation mode  
-      to PWM phase correct: mode = 5
-      (WGM0 = 1, WGM21 = 0, WGM22 = 1) */
-      
-      /* Stop timer0 by clearing CSS bits and set WGM22 */
-      TCCR0B = 0x08;  
-       
-      /* Set WGM00 and WGM01 */
-      TCCR0A =  0x01;  
-      
-      /*  Disable Timer0 interrupt */
-      TIMSK0 = 0;
+    case 1: // Shield 1 -> D3 -> GPT1
+      channel = 1;
+      callback = Gpt1TimerCallback;
+      break; 
+    case 2: // Shield 2 -> D6 -> GPT3
+      channel = 3;
+      callback = Gpt3TimerCallback;
       break;
     default:
-      break;//ignore error
+      return;
   }
+
+  FspTimer::force_use_of_pwm_reserved_timer();
+  
+  // 1 khz frequency is used as a default, it will be updated when the movement starts
+  gptPwm[shieldId].begin(TIMER_MODE_PERIODIC, GPT_TIMER, channel, 1000.0f, 0.0f, callback);
+  gptPwm[shieldId].setup_overflow_irq(1); // Set Priority to 1 
+  gptPwm[shieldId].open();
 }
 
 /******************************************************//**
- * @brief  Sets the frequency of PWM1 used by shield 0
+ * @brief  Sets the frequency of PWM of specified shield
+ * @param[in] shieldId (from 0 to 2)
  * @param[in] newFreq in Hz
  * @retval None
  * @note The frequency is directly the current speed of the shield
+ * See 22.3.3 for PWM Output Operating Mode
  **********************************************************/
-void L6474::Pwm1SetFreq(uint16_t newFreq)
+void L6474::PwmSetFreq(uint8_t shieldId, uint16_t newFreq)
 {
-  uint8_t index = 0;
-  uint32_t top;
-  uint16_t TargetedPrescaler;
- 
-  TargetedPrescaler = (int16_t)(F_CPU / (2 * (uint32_t) newFreq * UINT16_MAX));
-
-  do
-  {
-    while ((index < PRESCALER_ARRAY_TIMER0_1_SIZE - 1)&&
-           (TargetedPrescaler > prescalerArrayTimer0_1[++index]));
-    TargetedPrescaler = prescalerArrayTimer0_1[index];
-    top = F_CPU/(2* (uint32_t)newFreq * TargetedPrescaler);
-   } while ((index < PRESCALER_ARRAY_TIMER0_1_SIZE - 1) && (top > UINT16_MAX));
-
-  /* Disable Timer1 Interrupt */
-  cbi(TIMSK1,TOIE1);
+  /* The FspTimer library automatically handles the calculation of the 
+   * hardware prescaler (clock divider) and the period register. 
+   * It also uses the timer's shadow registers, meaning the new frequency 
+   * is applied cleanly on the next overflow without glitching */
+  gptPwm[shieldId].set_frequency((float)newFreq);
   
-  ICR1 = (uint16_t)top;
-  OCR1A = ((uint16_t)top) >> 1; // Set a 50 % duty cycle
-  
-  /* Enable compare match channel A output */
-  sbi(TCCR1A, COM1A1);
-  
-    /* Reenable Timer1 Interrupt */
-  sbi(TIMSK1,TOIE1);
-  
-  /* Set the Prescaler without erasing WGM12 and WGM13 bit*/
-  /* And so, start the timer */
-  TCCR1B = (TCCR1B & 0x18) | index;
-}
-
-/******************************************************//**
- * @brief  Sets the frequency of PWM2 used by shield 1
- * @param[in] newFreq in Hz
- * @retval None
- * @note The frequency is directly the current speed of the shield
- **********************************************************/
-void L6474::Pwm2SetFreq(uint16_t newFreq)
-{
-  uint8_t index = 0;
-  uint16_t top;
-  uint16_t TargetedPrescaler;
- 
-  TargetedPrescaler = (uint16_t)(F_CPU / (2 * (uint32_t)newFreq * UINT8_MAX));
-
-  /* Compute timer2 top */
-  do
-  {
-    while ((index < PRESCALER_ARRAY_TIMER2_SIZE - 1) && (TargetedPrescaler > prescalerArrayTimer2[++index]));
-    TargetedPrescaler = prescalerArrayTimer2[index];
-    top = (uint16_t)(F_CPU/(2* (uint32_t)newFreq * TargetedPrescaler));
-   } while ((index < PRESCALER_ARRAY_TIMER2_SIZE - 1) && (top > UINT8_MAX));
-  
-  /* Disable Timer2 Interrupt */
-  cbi(TIMSK2,TOIE2);
-  
-  OCR2A = (uint8_t)top;
-  OCR2B = (uint8_t)top >> 1; // Set a 50 % duty cycle
-  
-  /* Enable compare match channel B output */
-  sbi(TCCR2A, COM2B1);
-
-  /* Reenable Timer2 Interrupt */
-  sbi(TIMSK2,TOIE2);
-  
-  /* Set the Prescaler without erasing WGM22 bit*/
-  /* And so, start the timer */
-  TCCR2B = (TCCR2B & 0x8) | index;
-}
-
-/******************************************************//**
- * @brief  Sets the frequency of PWM3 used by shield 2
- * @param[in] newFreq in Hz
- * @retval None
- * @note The frequency is directly the current speed of the shield
- **********************************************************/
-void L6474::Pwm3SetFreq(uint16_t newFreq)
-{
-  uint8_t index = 0;
-  uint16_t top;
-  uint16_t TargetedPrescaler;
-  
- 
-  TargetedPrescaler = (uint16_t)(F_CPU / (4 * (uint32_t)newFreq * UINT8_MAX));
-
-  /* Compute timer0 top */
-  do
-  {
-    while ((index < PRESCALER_ARRAY_TIMER0_1_SIZE - 1) && 
-           (TargetedPrescaler > prescalerArrayTimer0_1[++index]));
-    TargetedPrescaler = prescalerArrayTimer0_1[index];
-
-    top = (uint16_t)(F_CPU/(4* (uint32_t)newFreq * TargetedPrescaler));
-    
-   } while ((index < PRESCALER_ARRAY_TIMER0_1_SIZE - 1) && (top > UINT8_MAX));
-  
-  /* Disable Timer0 Interrupt */
-  cbi(TIMSK0,TOIE0);
-  
-  OCR0A = (uint8_t)top  ;
-  OCR0B = (uint8_t)(top) >> 1 ; // Set a 50 % duty cycle
-  
-  /* Enable compare match channel A output */
-  sbi(TCCR0A, COM0A0);
-    
-  /* Reenable Timer0 Interrupt */
-  sbi(TIMSK0,TOIE0);
-
-  /* Set the Prescaler without erasing WGM02 bit*/
-  /* And so, start the timer */
-  TCCR0B = (TCCR0B & 0x8) | index;
+  /* Ensure the timer is actively running */
+  gptPwm[shieldId].start();
 }
 
 /******************************************************//**
@@ -1612,44 +1429,7 @@ void L6474::Pwm3SetFreq(uint16_t newFreq)
  **********************************************************/
 void L6474::PwmStop(uint8_t shieldId)
 {
-  switch (shieldId)
-  {
-    case 0:
-      /* PWM1 uses timer 1 */
-    
-      /* Stop timer1 by clearing CSS bits (keep  WGM13 and WGM12) */
-      TCCR1B = 0x10;  
-             
-      /*  Disable Timer1 interrupt */
-      TIMSK1 = 0;
-    
-      break;
-    case  1:
-      /* PWM2 uses timer 2 */
-     
-      /* Stop timer2 by clearing CSS bits (keep  WGM22) */
-      TCCR2B = 0x08;  
-       
-      /*  Disable Timer2 interrupt */
-      TIMSK2 = 0; 
-      
-      break;
-    case 2:
-      /* PWM3 uses timer 0 */
-      /* !!!!! Caution: Calling this configuration will break */
-      /* all default Arduino's timing functions as delay(),millis()... */
-           
-      /* Stop timer0 by clearing CSS bits (keep  WGM22) */
-      TCCR0B = 0x08;  
-       
-      
-      /*  Disable Timer0 interrupt */
-      TIMSK0 = 0;
-      
-      break;
-    default:
-      break;//ignore error
-  }
+  gptPwm[shieldId].stop();
 }
 
 /******************************************************//**
@@ -1731,68 +1511,54 @@ inline uint8_t L6474::Tmin_Time_to_Par(double Tmin)
   return ((uint8_t)(((Tmin - 0.5)*2)+0.5));
 }
 
-#ifdef _USE_TIMER_0_FOR_L6474
 /******************************************************//**
- * @brief Timer0 interrupt handler used by PW3 for shield 2
+ * @brief GPT0 interrupt handler used by PWM1 for shield 0
  * and enable the power bridge
  * @param None
  * @retval None
  **********************************************************/
-ISR(TIMER0_OVF_vect) 
+void L6474::Gpt0TimerCallback(timer_callback_args_t *p_args)
 {
-  static bool isr0Toggle = false;
-  class L6474* instancePtr = L6474::GetInstancePtr();
-  if (isr0Toggle)
+  if (instancePtr != nullptr && instancePtr->GetShieldState(0) != INACTIVE)
   {
-    if (instancePtr != NULL)
-    {  
-      if (instancePtr->GetShieldState(2) != INACTIVE)
-      {
-        instancePtr->StepClockHandler(2);
-      }
-    }
-    isr0Toggle = false;
-  }
-  else
-  {
-    isr0Toggle = true;
-  }
-}
-#endif
-
-/******************************************************//**
- * @brief Timer1 interrupt handler used by PW1 for shield 0
- * and enable the power bridge
- * @param None
- * @retval None
- **********************************************************/
-ISR(TIMER1_OVF_vect) 
-{
-  class L6474* instancePtr = L6474::GetInstancePtr();
-  if (instancePtr != NULL)
-  {  
-    if (instancePtr->GetShieldState(0) != INACTIVE)
-    {
-      instancePtr->StepClockHandler(0);
-    }
+    digitalWrite(L6474_PWM_1_Pin, HIGH);
+    delayMicroseconds(2);
+    digitalWrite(L6474_PWM_1_Pin, LOW);
+    instancePtr->StepClockHandler(0);
   }
 }
 
 /******************************************************//**
- * @brief Timer2 interrupt handler used by PW2 for shield 1
+ * @brief GPT1 interrupt handler used by PWM2 for shield 1
  * and enable the power bridge
  * @param  None
  * @retval None
  **********************************************************/
- ISR(TIMER2_OVF_vect) 
+void L6474::Gpt1TimerCallback(timer_callback_args_t *p_args)
 {
-  class L6474* instancePtr = L6474::GetInstancePtr();
-  if (instancePtr != NULL)
-  {  
-    if (instancePtr->GetShieldState(1) != INACTIVE)
-    {
-      instancePtr->StepClockHandler(1);
-    }
+  if (instancePtr != nullptr && instancePtr->GetShieldState(1) != INACTIVE)
+  {
+    digitalWrite(L6474_PWM_2_Pin, HIGH);
+    delayMicroseconds(2);
+    digitalWrite(L6474_PWM_2_Pin, LOW);
+    instancePtr->StepClockHandler(1);
+  }
+}
+
+/******************************************************//**
+ * @brief GPT3 interrupt handler used by PWM3 for shield 2
+ * and enable the power bridge
+ * @param None
+ * @retval None
+ **********************************************************/
+void L6474::Gpt3TimerCallback(timer_callback_args_t *p_args)
+{
+  if (instancePtr != nullptr && instancePtr->GetShieldState(2) != INACTIVE)
+  {
+    digitalWrite(L6474_PWM_3_Pin, HIGH);
+    delayMicroseconds(2);
+    digitalWrite(L6474_PWM_3_Pin, LOW);
+    instancePtr->StepClockHandler(2);
   }
 }
 
@@ -1809,8 +1575,3 @@ uint16_t GetFreeRam (void)
   return (uint16_t) &v - (__brkval == 0 ? (uint16_t) &__heap_start : (uint16_t) __brkval);
 }
 #endif
-
-
-
-                                    
-

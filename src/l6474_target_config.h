@@ -3,8 +3,9 @@
  * @version V1.0
  * @date    March 3, 2014
  * @brief   Predefines values for the L6474 registers
- * and for the shields parameters
-  *
+ * @author  Original: MotorDriver (https://github.com/MotorDriver/L6474)
+ *          Ported/Maintained by: Matthew R. Miller
+ *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of either the GNU General Public License version 2
  * or the GNU Lesser General Public License version 2.1, both as
