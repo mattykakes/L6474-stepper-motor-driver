@@ -21,20 +21,6 @@
 
 L6474 myL6474;
 
-void myinit()
-{
-  // this needs to be called before setup() or some functions won't
-  // work there
-  sei();
-}
-
-int main( void )
-{
-  myinit();
- setup();
-  while ( true ) { loop(); }
-}
-
 void setup()
 {
   int32_t pos;
