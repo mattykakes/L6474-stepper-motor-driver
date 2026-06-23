@@ -1,6 +1,6 @@
 /******************************************************//**
  * @file    l6474.h 
- * @version V3.1
+ * @version 1.0.0
  * @date    June 14, 2026
  * @brief   Header for L6474 library for arduino UNO R4
  * @author  Original: MotorDriver (https://github.com/MotorDriver/L6474)

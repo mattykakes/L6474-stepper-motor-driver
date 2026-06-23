@@ -1,6 +1,6 @@
 /******************************************************//**
  * @file    l6474_target_config.h
- * @version V1.0
+ * @version 1.0.0
  * @date    March 3, 2014
  * @brief   Predefines values for the L6474 registers
  * @author  Original: MotorDriver (https://github.com/MotorDriver/L6474)
