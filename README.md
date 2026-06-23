@@ -211,7 +211,7 @@ Then you have to enter one of the following command line:
 - `C34 <arg1>`        -> to set the step mode to full step if `<arg1>` is 1, to half step if `<arg1>` is 2, to 1/4 step if `<arg1>` is 4, to 1/8 step if `<arg1>` is 8, to 1/16 step if `<arg1>` is 16
 - `C35 <arg1>`        -> to set direction: forward direction if `<arg1>` is 0, backward direction if `<arg1>` is 1
 
-### 11. Motivation & Support
+### 11. Credit & Support
 ------------------------------------
 This library is a modernized port of the original [L6474 library](https://github.com/MotorDriver/L6474) created by MotorDriver. 
 
